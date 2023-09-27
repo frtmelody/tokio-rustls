@@ -1,12 +1,12 @@
-use std::convert::TryFrom;
 use std::io;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::{
     client::TlsStream,
-    rustls::{self, ClientConfig, OwnedTrustAnchor},
+    rustls::{self, ClientConfig},
     TlsConnector,
 };
 
@@ -34,13 +34,7 @@ async fn get(
 #[tokio::test]
 async fn test_tls12() -> io::Result<()> {
     let mut root_store = rustls::RootCertStore::empty();
-    root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let config = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
@@ -72,13 +66,7 @@ fn test_tls13() {
 #[tokio::test]
 async fn test_modern() -> io::Result<()> {
     let mut root_store = rustls::RootCertStore::empty();
-    root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let config = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_store)

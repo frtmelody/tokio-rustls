@@ -1,8 +1,5 @@
 #![cfg(feature = "early-data")]
 
-use futures_util::{future, future::Future, ready};
-use rustls::RootCertStore;
-use std::convert::TryFrom;
 use std::io::{self, BufRead, BufReader, Cursor};
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -11,15 +8,14 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::thread;
 use std::time::Duration;
+
+use futures_util::{future, future::Future, ready};
+use rustls::{self, ClientConfig, RootCertStore};
 use tokio::io::{split, AsyncRead, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::time::sleep;
-use tokio_rustls::{
-    client::TlsStream,
-    rustls::{self, ClientConfig, OwnedTrustAnchor},
-    TlsConnector,
-};
+use tokio_rustls::{client::TlsStream, TlsConnector};
 
 struct Read1<T>(T);
 
@@ -132,17 +128,11 @@ async fn test_0rtt() -> io::Result<()> {
     wait_for_server(format!("127.0.0.1:{}", server_port).as_str()).await;
 
     let mut chain = BufReader::new(Cursor::new(include_str!("end.chain")));
-    let certs = rustls_pemfile::certs(&mut chain).unwrap();
-    let trust_anchors = certs.iter().map(|cert| {
-        let ta = webpki::TrustAnchor::try_from_cert_der(&cert[..]).unwrap();
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    });
     let mut root_store = RootCertStore::empty();
-    root_store.add_server_trust_anchors(trust_anchors);
+    for cert in rustls_pemfile::certs(&mut chain) {
+        root_store.add(cert.unwrap()).unwrap();
+    }
+
     let mut config = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()

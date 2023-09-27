@@ -1,14 +1,14 @@
-use futures_util::future::TryFutureExt;
-use lazy_static::lazy_static;
-use rustls::{ClientConfig, OwnedTrustAnchor};
-use rustls_pemfile::{certs, rsa_private_keys};
-use std::convert::TryFrom;
 use std::io::{BufReader, Cursor, ErrorKind};
 use std::net::SocketAddr;
 use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{io, thread};
+
+use futures_util::future::TryFutureExt;
+use lazy_static::lazy_static;
+use rustls::ClientConfig;
+use rustls_pemfile::{certs, rsa_private_keys};
 use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
@@ -22,17 +22,17 @@ const RSA: &str = include_str!("end.rsa");
 lazy_static! {
     static ref TEST_SERVER: (SocketAddr, &'static str, &'static [u8]) = {
         let cert = certs(&mut BufReader::new(Cursor::new(CERT)))
-            .unwrap()
-            .drain(..)
-            .map(rustls::Certificate)
+            .map(|result| result.unwrap())
             .collect();
-        let mut keys = rsa_private_keys(&mut BufReader::new(Cursor::new(RSA))).unwrap();
-        let mut keys = keys.drain(..).map(rustls::PrivateKey);
+        let key = rsa_private_keys(&mut BufReader::new(Cursor::new(RSA)))
+            .next()
+            .unwrap()
+            .unwrap();
 
         let config = rustls::ServerConfig::builder()
             .with_safe_defaults()
             .with_no_client_auth()
-            .with_single_cert(cert, keys.next().unwrap())
+            .with_single_cert(cert, key.into())
             .unwrap();
         let acceptor = TlsAcceptor::from(Arc::new(config));
 
@@ -111,16 +111,10 @@ async fn pass() -> io::Result<()> {
     use std::time::*;
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let chain = certs(&mut std::io::Cursor::new(*chain)).unwrap();
     let mut root_store = rustls::RootCertStore::empty();
-    root_store.add_server_trust_anchors(chain.iter().map(|cert| {
-        let ta = webpki::TrustAnchor::try_from_cert_der(&cert[..]).unwrap();
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
+    for cert in certs(&mut std::io::Cursor::new(*chain)) {
+        root_store.add(cert.unwrap()).unwrap();
+    }
 
     let config = rustls::ClientConfig::builder()
         .with_safe_defaults()
@@ -137,16 +131,10 @@ async fn pass() -> io::Result<()> {
 async fn fail() -> io::Result<()> {
     let (addr, domain, chain) = start_server();
 
-    let chain = certs(&mut std::io::Cursor::new(*chain)).unwrap();
     let mut root_store = rustls::RootCertStore::empty();
-    root_store.add_server_trust_anchors(chain.iter().map(|cert| {
-        let ta = webpki::TrustAnchor::try_from_cert_der(&cert[..]).unwrap();
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
+    for cert in certs(&mut std::io::Cursor::new(*chain)) {
+        root_store.add(cert.unwrap()).unwrap();
+    }
 
     let config = rustls::ClientConfig::builder()
         .with_safe_defaults()
@@ -164,7 +152,6 @@ async fn fail() -> io::Result<()> {
 #[tokio::test]
 async fn test_lazy_config_acceptor() -> io::Result<()> {
     let (sconfig, cconfig) = utils::make_configs();
-    use std::convert::TryFrom;
 
     let (cstream, sstream) = tokio::io::duplex(1200);
     let domain = rustls::ServerName::try_from("foobar.com").unwrap();
